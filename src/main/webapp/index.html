@@ -1,0 +1,562 @@
+
+<!DOCTYPE html>
+<html>
+    <head>
+<!--        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" /> 
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"> -->
+    <title>CVC data migration</title>
+
+  <!--      <link rel="stylesheet" type="text/css" href="http://examples.sencha.com/extjs/5.1.0/examples/shared/example.css" />
+    <script type="text/javascript" src="http://examples.sencha.com/extjs/5.1.0/examples/shared/include-ext.js"></script>
+    <script type="text/javascript" src="http://examples.sencha.com/extjs/5.1.0/examples/shared/options-toolbar.js"></script>  --> 
+    
+    <!--  <link  href="/datamapping/extjs/build/packages/ext-theme-neptune/build/resources/ext-theme-neptune-all.css" rel="stylesheet" />
+        <script src="/datamapping/extjs/build/ext.js"></script>
+        <script src="/datamapping/extjs/build/packages/ext-theme-neptune/build/ext-theme-neptune.js"></script> -->
+
+
+ 
+   <link rel="stylesheet" type="text/css" href="ext-theme-classic-all.css" />
+    <script type="text/javascript" src="ext-all.js"></script> 
+ 
+    <!-- page specific -->
+<!--    <script type="text/javascript" src="binding.js"></script> -->
+
+<style>
+.rowRed{
+    color:red;
+}
+.rowBlue{
+    color:blue;
+}
+
+.rowSuccess{
+     background-color:#ace600;
+}
+
+.rowInprogress{
+     background-color:#c2d6d6;
+}
+
+.rowFailed{
+     background-color:#ffc266;
+}
+
+
+</style>
+	<script type="text/javascript">
+Ext.require([
+    'Ext.grid.*',
+    'Ext.data.*',
+    'Ext.panel.*',
+    'Ext.layout.container.Border'
+]);
+
+Ext.onReady(function(){
+	
+	var rootURL = '/datamapping';
+	
+	Ext.Ajax.timeout = 120000; 
+    Ext.define('Book',{
+        extend: 'Ext.data.Model',
+        
+        proxy: {
+            type: 'ajax',
+            reader: 'json'
+        },
+        fields: [
+            // set up the fields mapping into the xml doc
+            // The first needs mapping, the others are very basic
+             'requestId',
+             'briefingManager',
+             'hostName',
+             'reqStatus',
+             'biRequestId',
+             'companyName',
+             'eventStartDate',
+             'status',
+             'startDate',
+             'endDate'
+        ]
+    });
+    
+    var states = Ext.create('Ext.data.Store', {
+        fields: ['name', 'value'],
+        data : [
+            {"name":"Cancelation Requested", "value":"Cancelation Requested"},
+            {"name":"Cancelled", "value":"Cancelled"},
+            {"name":"Confirmed", "value":"Confirmed"},
+            {"name":"Declined", "value":"Declined"},
+            {"name":"Hold", "value":"Hold"},
+            {"name":"Incomplete", "value":"Incomplete"},
+            {"name":"Pending", "value":"Pending"},
+            {"name":"Re-Scheduled", "value":"Re-Scheduled"},
+            {"name":"Re-Submitted", "value":"Re-Submitted"},
+            {"name":"Submitted", "value":"Submitted"},
+            {"name":"Waitlisted", "value":"Waitlisted"}
+        ],
+        sorters: [{
+            property: 'name',
+            direction: 'asc'
+        }]
+    });
+    
+    
+    Ext.define('Log',{
+        extend: 'Ext.data.Model',
+        proxy: {
+            type: 'ajax',
+            reader: 'json'
+        },
+        fields: [
+            // set up the fields mapping into the xml doc
+            // The first needs mapping, the others are very basic
+             'step',
+            'message',
+            'status'
+        ]
+    });
+
+    // create the Data Store
+    var store = Ext.create('Ext.data.Store', {
+        model: 'Book',
+        pageSize: 100,
+        proxy: {
+            // load using HTTP
+            type: 'ajax',
+            headers:{
+            	     "Accept":"application/json",
+            	     "Content-Type":"application/json"            	     
+            },
+              url: 'requests',
+            reader: {
+                type: 'json',
+                root:'requests',
+                totalProperty: 'pagination.total'
+            },
+        sorters: [{
+            property: 'processDate',
+            direction: 'ASC'
+        }]
+            
+        }
+    });
+    
+    store.on('beforeload', function() {
+    	   var proxy = store.getProxy();
+      	 var requestId = Ext.getCmp('requestId').value;
+     	var fromDate =Ext.getCmp('fromDate').getSubmitValue();
+     	var toDate = Ext.getCmp('toDate').getSubmitValue();
+     	var processed = Ext.getCmp('processed').getValue();
+     	var status = Ext.getCmp('status').getValue();
+     	var briefingManager = Ext.getCmp('briefingManager').getValue();
+
+    	   proxy.setExtraParam('requestId',requestId);
+    	   proxy.setExtraParam('fromDate', fromDate);
+    	   proxy.setExtraParam('toDate', toDate);
+    	   proxy.setExtraParam('processed', processed);
+    	   proxy.setExtraParam('status', status);
+    	   proxy.setExtraParam('briefingManager',briefingManager);
+    	})
+    
+    var logStore = Ext.create('Ext.data.Store', {
+        model: 'Log',
+        proxy: {
+            // load using HTTP
+            type: 'ajax',
+            headers:{
+            	     "Accept":"application/json",
+            	     "Content-Type":"application/json"            	     
+            },
+              url: 'requests/logs',
+            reader: {
+                type: 'json',
+                root:'content'
+            },
+        sorters: [{
+            property: 'processDate',
+            direction: 'ASC'
+        }]
+        }
+    });
+    
+    var pluginExpanded = true;
+
+    var sm = new Ext.selection.CheckboxModel({
+        checkOnly: true
+    });
+    
+    
+    // create the grid
+    var grid = Ext.create('Ext.grid.Panel', {
+        bufferedRenderer: false,
+        store: store,
+        selModel: sm,
+        id:'gridId',
+/*         viewConfig: {
+          	 getRowClass: function(record, rowIndex, rowParams, store,metaData) {
+          	  if (record.get('status')== "Completed") {
+          		metaData.tdAttr = 'style="background:#ace600;"';
+          	 }else if (record.get('status')== "In Progress")    {
+          		metaData.tdAttr = 'style="background:#c2d6d6;"';
+      			}
+          	else if (record.get('status')== "Failed")    {
+          		metaData.tdAttr = 'style="background:#ffc266;"';
+  			}
+          	  
+          	
+          	 }
+          	},
+ */
+        columns: {
+        	
+            defaults: {
+                renderer: function (value, metaData, record) {
+                	  if (record.get('status')== "Completed") {
+                    		metaData.tdAttr = 'style="background:#ace600;"';
+                    	 }else if (record.get('status')== "In Progress")    {
+                    		metaData.tdAttr = 'style="background:#c2d6d6;"';
+                			}
+                    	else if (record.get('status')== "Failed")    {
+                    		metaData.tdAttr = 'style="background:#ffc266;"';
+            			}
+                    return value;
+                }
+            },
+            items: [{text:"CVC Request Id",width: 100, dataIndex: 'requestId'},
+			{text:"Briefing Manager",width:225,dataIndex:'briefingManager'},
+            {text:"Host Name",width:225, dataIndex:'hostName'},
+			{text:"Request Status",width: 105, dataIndex: 'reqStatus'},
+			{text:"BIQ Request Id",width: 105, dataIndex: 'biRequestId'},
+            {text: "Company Name", width: 300, dataIndex: 'companyName'},
+            {text:"Start Date", width: 225 , 
+            	dataIndex: 'eventStartDate',                                    
+            	renderer: function(value, metaData, record, rowIndex, colIndex, store, view) {
+                	  if (record.get('status')== "Completed") {
+                    		metaData.tdAttr = 'style="background:#ace600;"';
+                    	 }else if (record.get('status')== "In Progress")    {
+                    		metaData.tdAttr = 'style="background:#c2d6d6;"';
+                			}
+                    	else if (record.get('status')== "Failed")    {
+                    		metaData.tdAttr = 'style="background:#ffc266;"';
+            			}
+            		var date = new Date(value);
+                			if(value!='') return Ext.Date.format(new Date(date.valueOf() + 60000 * date.getTimezoneOffset()),'m/d/Y');
+            	}
+            },         
+            {text: "Migration Status", width: 150, dataIndex: 'status'},
+            {text: "Migration Start", width: 175, dataIndex: 'startDate',                                    
+            	renderer: function(value, metaData, record, rowIndex, colIndex, store, view) {
+                	  if (record.get('status')== "Completed") {
+                    		metaData.tdAttr = 'style="background:#ace600;"';
+                    	 }else if (record.get('status')== "In Progress")    {
+                    		metaData.tdAttr = 'style="background:#c2d6d6;"';
+                			}
+                    	else if (record.get('status')== "Failed")    {
+                    		metaData.tdAttr = 'style="background:#ffc266;"';
+            			}
+            		if(value!='' && value!=null) return Ext.Date.format(new Date(value),'m/d/Y h:i:s A');
+    			}
+            },
+            {text: "Migration End", width: 175, dataIndex: 'endDate',
+            	renderer: function(value, metaData, record, rowIndex, colIndex, store, view) {
+                	  if (record.get('status')== "Completed") {
+                    		metaData.tdAttr = 'style="background:#ace600;"';
+                    	 }else if (record.get('status')== "In Progress")    {
+                    		metaData.tdAttr = 'style="background:#c2d6d6;"';
+                			}
+                    	else if (record.get('status')== "Failed")    {
+                    		metaData.tdAttr = 'style="background:#ffc266;"';
+            			}
+            		if(value!='' && value!=null) return Ext.Date.format(new Date(value),'m/d/Y h:i:s A');
+    			}
+            }]
+            
+    },
+            bbar: Ext.create('Ext.PagingToolbar', {
+                store: store,
+                displayInfo: true,
+                displayMsg: 'Displaying Requests {0} - {1} of {2}',
+                emptyMsg: "No Requests to display",
+                inputItemWidth: 35
+            }),
+        height:300,
+
+    });
+    
+    var logGrid = Ext.create('Ext.grid.Panel', {
+        bufferedRenderer: false,
+        store: logStore,
+        id:'logGridId',
+        autoScroll: true,
+        viewConfig: {
+       	 getRowClass: function(record, rowIndex, rowParams, store) {
+       	  if (record.get('status')== "1") {
+       		  return 'rowBlue';
+       	 }else    {
+   				return 'rowRed';
+   			}
+       	 }
+       	},
+        columns: [
+			{text:"Step",width: 150, dataIndex: 'step'},
+            {text: "Message", width: 600, dataIndex: 'message'},
+            {text:"Status", width: 225 , dataIndex: 'status' }
+            ],
+        height:300,
+
+    });
+    
+    var form = Ext.create('Ext.form.Panel', {
+        title: '',
+        bodyPadding: 5,
+        width: 400,
+
+        // Any configuration items here will be automatically passed along to
+        // the Ext.form.Basic instance when it gets created.
+
+        // The form will submit an AJAX request to this URL when submitted
+        url: 'save-form.php',
+
+        items: [{
+            xtype: 'textfield',
+            fieldLabel: 'Request Id',
+            width:250,
+            name: 'theField',
+            id:'requestId'
+        },
+        {
+            xtype: 'datefield',
+            fieldLabel: 'From Date',
+            width:250,
+            name: 'theField',
+            submitFormat: 'U000',
+            id:'fromDate'
+        },{
+            xtype: 'datefield',
+            width:250,
+            fieldLabel: 'To Date',
+            name: 'theField',
+            submitFormat: 'U000',
+            id:'toDate'
+        },
+        {
+            xtype: 'checkbox',
+            fieldLabel: 'Processed Requests',
+            width:250,
+            name: 'theField',
+            id:'processed'
+        },{
+            xtype: 'combo',
+            fieldLabel: 'Request Status',
+            width:250,
+            store: states,
+            queryMode: 'local',
+            displayField: 'name',
+            valueField: 'value',
+            multiSelect: true,
+            name: 'theField',
+            id:'status'
+        },{
+            xtype: 'textfield',
+            fieldLabel: 'Briefing Manager Email',
+            width:250,
+            name: 'briefingManager',
+            id:'briefingManager'
+        }
+        
+        ],
+
+        buttons: [{
+            text: 'Filter Requests',
+             handler: function() {
+            	 var requestId = Ext.getCmp('requestId').value;
+                	var fromDate =Ext.getCmp('fromDate').getSubmitValue();
+                	var toDate = Ext.getCmp('toDate').getSubmitValue();
+                	var processed = Ext.getCmp('processed').getValue();
+                	var status = Ext.getCmp('status').getValue();
+                	var briefingManager = Ext.getCmp('briefingManager').getValue();
+               	var datStore  = Ext.getCmp('gridId').getStore().load({
+               	    params: {
+               	    	requestId: requestId,
+               	    	fromDate: fromDate,
+               	    	toDate:toDate,
+               	    	processed:processed,
+               	    	briefingManager:briefingManager,
+               	    	status:status,
+               	    	start:0
+               	    }
+               	});
+            } 
+        },
+ /*        {
+        	 text: 'Load Data from CVC to BIQ',
+        	 handler: function() {
+                	
+        		 Ext.Ajax.request({ 
+             		url: '/datamapping/requests/load', 
+             		method: 'GET', 
+             		
+             		success: function(transport){ 
+             			 console.log('success');
+             		}, 
+             		failure: function(transport){ 
+             			 
+             		}
+             });
+            } 
+        }, */
+        {
+            text : 'Delete selected Requests',
+            handler: function() {
+            	 var selection= grid.getSelectionModel(); 
+                 items=[];
+                 for(var i=0;i < grid.store.getCount();i++){  
+                    if(selection.isSelected(i)){
+                        items.push(grid.store.getAt(i).data.biRequestId);
+                    }
+                 }
+                 if(items.length == 0){
+                	 Ext.MessageBox.show({
+                         title: 'Icon Support',
+                         msg: 'Please select atleast one request',
+                         buttons: Ext.MessageBox.OK,
+              
+                         icon: Ext.MessageBox.ERROR
+                     });
+                 }
+            //	var requestId = grid.getSelectionModel().getSelected().items[0].data.requestId;
+            	
+            	Ext.Ajax.request({ 
+            		url: 'requests/deletedata?data='+items, 
+            		method: 'DELETE', 
+            		success: function(transport){ 
+            			if(transport.responseText!=null){
+            				var obj = JSON.parse(transport.responseText);
+            				if(obj.path.includes('login')){
+            					alert('Session expired. Please login again');
+            					 location.reload();
+            				}
+            			}
+            		}, 
+            		failure: function(transport){ 
+            			 
+            		}
+            });
+        }
+        },            {
+
+            text : 'Process selected Requests',
+            handler: function() {
+            	 var selection= grid.getSelectionModel(); 
+                 items=[];
+                 for(var i=0;i < grid.store.getCount();i++){  
+                    if(selection.isSelected(i)){
+                        items.push(grid.store.getAt(i).data.requestId);
+                    }
+                 }
+                 if(items.length == 0){
+                	 Ext.MessageBox.show({
+                         title: 'Alert',
+                         msg: 'Please select atleast one request',
+                         buttons: Ext.MessageBox.OK,
+              
+                         icon: Ext.MessageBox.ERROR
+                     });
+                 }
+            //	var requestId = grid.getSelectionModel().getSelected().items[0].data.requestId;
+            	
+            	Ext.Ajax.request({ 
+            		url: 'requests', 
+            		method: 'PUT', 
+            		params: { 
+            			requests: items
+            		}, 
+            		success: function(transport){ 
+            			console.log('success');
+            			console.log(transport);
+            		//	 Ext.getCmp('logGridId').getStore().getProxy().setUrl('/datamapping/requests/'+selectedRecord[0].data.requestId +'/logs');
+            	            Ext.getCmp('logGridId').getStore().load({
+            	           	    params: {
+            	           	    	requestId: selectedRecord[0].data.requestId           	    }
+            	           	});
+            		}, 
+            		failure: function(transport){ 
+            			if(transport.responseText!=null){
+            				var obj = JSON.parse(transport.responseText);
+            				if(obj.path.includes('login')){
+            					alert('Session expired. Please login again');
+            					 location.reload();
+            				}
+            			}
+            			
+            		//	 Ext.getCmp('logGridId').getStore().getProxy().setUrl('/datamapping/requests/'+selectedRecord[0].data.requestId +'/logs');
+            	            Ext.getCmp('logGridId').getStore().load({
+            	           	    params: {
+            	           	    	requestId: selectedRecord[0].data.requestId           	    }
+            	           	});
+            		}
+            });
+        }
+        }
+        ]
+    });
+    
+        
+    // define a template to use for the detail view
+    var bookTplMarkup = [
+//    	 '<b>Process Id</b>: {processId}<br/>',
+//         '<b>Project Id</b>: {projectId}<br/>',
+//         '<b>Housing Unit Id</b>: {housingUnitId}<br/>',
+//         '<b>Client Id</b>: {clientId}<br/>',
+         '<b>Data mapping Process Log </b>: {requestId} - {companyName}'
+    ];
+    var bookTpl = Ext.create('Ext.Template', bookTplMarkup);
+
+    Ext.create('Ext.Panel', {
+        renderTo: 'binding-example',
+        frame: true,
+        title: 'CVC Data migration',
+        width: 1400,
+        height: 850,
+        items: [
+        	
+        	form
+        	,
+            grid,
+
+
+        	
+            {
+                id: 'detailPanel',
+                region: 'center',
+                bodyPadding: 7,
+                bodyStyle: "background: #ffffff;color: blue;",
+                html: 'Please select a request to see data migration details.'
+        },
+        logGrid
+        	
+        ]
+    });
+    
+    // update panel body on selection change
+    grid.getSelectionModel().on('selectionchange', function(sm, selectedRecord) {
+        if (selectedRecord.length) {
+            var detailPanel = Ext.getCmp('detailPanel');
+            detailPanel.update(bookTpl.apply(selectedRecord[0].data));
+         //   Ext.getCmp('logGridId').getStore().getProxy().setUrl('/datamapping/requests/'+selectedRecord[0].data.requestId +'/logs');
+            Ext.getCmp('logGridId').getStore().load({
+           	    params: {
+           	    	requestId: selectedRecord[0].data.requestId           	    }
+           	});
+        }
+    });
+});
+	</script>
+	
+</head>
+<body>
+    <div id="binding-example"></div>
+</body>
+</html>
